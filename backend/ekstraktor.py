@@ -118,6 +118,24 @@ REGULY: dict[str, Regula] = {
 
 LEMAT_NEGACJI = "nie"
 
+# Czesci mowy nigdy nie bedace kolokatami — liczebniki daly „rok --amod--> 2017".
+UPOS_ODRZUCANE = frozenset({"NUM", "PUNCT", "SYM", "X", "PRON", "DET", "ADP", "AUX"})
+
+
+def _lemat_sensowny(lemat: str) -> bool:
+    """Odsiewa lematy, ktore nie sa slowami.
+
+    Przebieg probny wyrzucil m.in. `złdo` (f=18) — sklejke z „100 zł do koszyka"
+    na stronach sklepowych — oraz lematy czysto cyfrowe. Takie wpisy nie tylko
+    zasmiecaja baze, ale trafiaja wysoko w logDice, bo wystepuja w jednym
+    powtarzanym szablonie i maja przez to skrajnie waskie profile brzegowe.
+    """
+    if len(lemat) < 2:
+        return False
+    if any(c.isdigit() for c in lemat):
+        return False
+    return any(c.isalpha() for c in lemat)
+
 
 # ----------------------------------------------------------------- ekstrakcja
 
@@ -158,7 +176,24 @@ def wyciagnij_trojki(tokeny: list[Token]) -> list[Trojka]:
         head = wg_id.get(tok.head)
         if head is None or not head.lemma or not tok.lemma:
             continue
+        if head.upos in UPOS_ODRZUCANE or tok.upos in UPOS_ODRZUCANE:
+            continue
         if head.upos not in regula.upos_head or tok.upos not in regula.upos_dep:
+            continue
+        if not _lemat_sensowny(head.lemma) or not _lemat_sensowny(tok.lemma):
+            continue
+
+        # Nazwy wlasne wieloczlonowe: „Zielona Góra" trafiala do bazy jako
+        # kolokacja góra+zielony (f=13 na probce 50 tys. tokenow). Oba czlony
+        # pisane wielka litera poza poczatkiem zdania to nazwa, nie zwiazek
+        # frazeologiczny.
+        if (
+            tok.relacja == "amod"
+            and head.id > 1
+            and tok.id > 1
+            and head.text[:1].isupper()
+            and tok.text[:1].isupper()
+        ):
             continue
 
         przypadek = tok.przypadek if regula.z_przypadkiem else None

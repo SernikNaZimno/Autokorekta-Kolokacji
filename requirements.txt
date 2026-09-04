@@ -1,7 +1,13 @@
 # Rdzen jezykowy
 stanza==1.14.0          # parser zaleznosciowy pl (PDB), LAS 91,7
-morfeusz2==1.99.15      # analiza + GENERACJA form fleksyjnych, kolo cp310-abi3
+morfeusz2==1.99.15      # analiza + GENERACJA form; tez filtr slownikowy korpusu
 
-# Backend (Etap 3+)
+# Pipeline korpusowy
+datasets>=4.0           # strumieniowanie Wikipedii PL i C4 pl z HuggingFace
+
+# Rozwoj
+pytest>=8.0
+
+# Backend dodatku (Etap 7)
 # fastapi
 # uvicorn[standard]

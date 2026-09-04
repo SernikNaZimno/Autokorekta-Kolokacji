@@ -48,32 +48,50 @@ def _dostroj(con: sqlite3.Connection) -> None:
 
 
 def zbuduj(
-    trojki: Iterable[Trojka],
+    trojki: Iterable[Trojka | tuple[str, str, str, str]],
     sciezka: str | Path,
     min_pary: int = MIN_CZESTOSC_PARY,
     partia: int = 100_000,
 ) -> dict[str, int]:
-    """Buduje baze z strumienia trojek. Zwraca statystyki."""
+    """Buduje baze ze strumienia trojek. Zwraca statystyki.
+
+    Przyjmuje `Trojka` albo gotowa krotke `(head, slot, dep, zrodlo)` — ta druga
+    postac pochodzi z pipeline'u korpusowego, ktory zapisuje trojki do TSV.
+
+    Znacznik zrodla jest zapamietywany per para, zeby dalo sie zmierzyc skazenie
+    domenowe (np. czy dana „kolokacja" pochodzi wylacznie z webu) i przewazyc
+    albo odrzucic zrodlo BEZ ponownego parsowania korpusu.
+    """
     sciezka = Path(sciezka)
     if sciezka.exists():
         sciezka.unlink()
 
     con = sqlite3.connect(sciezka)
     _dostroj(con)
-    con.execute("CREATE TABLE surowe (head TEXT, slot TEXT, dep TEXT)")
+    con.execute("CREATE TABLE surowe (head TEXT, slot TEXT, dep TEXT, zrodlo TEXT)")
 
-    bufor: list[tuple[str, str, str]] = []
+    bufor: list[tuple[str, str, str, str]] = []
     n_surowych = 0
     for t in trojki:
-        bufor.append((t.head, slot_z_trojki(t), t.dep))
+        if isinstance(t, Trojka):
+            bufor.append((t.head, slot_z_trojki(t), t.dep, "?"))
+        else:
+            bufor.append(t)
         if len(bufor) >= partia:
-            con.executemany("INSERT INTO surowe VALUES (?,?,?)", bufor)
+            con.executemany("INSERT INTO surowe VALUES (?,?,?,?)", bufor)
             n_surowych += len(bufor)
             bufor.clear()
     if bufor:
-        con.executemany("INSERT INTO surowe VALUES (?,?,?)", bufor)
+        con.executemany("INSERT INTO surowe VALUES (?,?,?,?)", bufor)
         n_surowych += len(bufor)
     con.commit()
+
+    # Wklad zrodel per para — mala tabela, a pozwala wykryc skazenie.
+    con.execute(
+        """CREATE TABLE pary_zrodlo AS
+           SELECT head, slot, dep, zrodlo, COUNT(*) AS f
+           FROM surowe GROUP BY head, slot, dep, zrodlo"""
+    )
 
     # Agregacja par.
     con.execute(
@@ -95,6 +113,11 @@ def zbuduj(
 
     con.execute("DROP TABLE surowe")
     con.execute("DELETE FROM pary WHERE f < ?", (min_pary,))
+    con.execute(
+        """DELETE FROM pary_zrodlo WHERE NOT EXISTS (
+               SELECT 1 FROM pary p WHERE p.head=pary_zrodlo.head
+               AND p.slot=pary_zrodlo.slot AND p.dep=pary_zrodlo.dep)"""
+    )
 
     # logDice = 14 + log2(2*f(xy) / (f(x)+f(y))). Skala ~0-14 niezalezna od
     # rozmiaru korpusu, wiec progi przenosza sie miedzy wersjami bazy.
@@ -109,6 +132,7 @@ def zbuduj(
     )
 
     con.execute("CREATE INDEX idx_para ON pary (head, slot, dep)")
+    con.execute("CREATE INDEX idx_pz ON pary_zrodlo (head, slot, dep)")
     con.execute("CREATE INDEX idx_slot_dep ON pary (slot, dep, logdice DESC)")
     con.execute("CREATE INDEX idx_slot_head ON pary (slot, head, logdice DESC)")
     con.execute("CREATE UNIQUE INDEX idx_bh ON brzeg_head (head, slot)")
@@ -217,6 +241,37 @@ class BazaKolokacji:
             sum(v * v for v in vb.values())
         )
         return licznik / norma if norma else 0.0
+
+    def zrodla_pary(self, head: str, slot: str, dep: str) -> dict[str, int]:
+        """Z jakich zrodel pochodzi ta para — do wykrywania skazenia domenowego.
+
+        Para pochodzaca w 100% z webu przy duzej czestosci to sygnal
+        boilerplate'u, nie normy jezykowej.
+        """
+        return {
+            zrodlo: f
+            for zrodlo, f in self.con.execute(
+                "SELECT zrodlo, f FROM pary_zrodlo WHERE head=? AND slot=? AND dep=?",
+                (head, slot, dep),
+            )
+        }
+
+    def udzial_zrodla(self, zrodlo: str, slot: str | None = None) -> float:
+        """Jaki udzial trojek (opcjonalnie w danym slocie) wnioslo zrodlo."""
+        if slot:
+            calosc = self.con.execute(
+                "SELECT SUM(f) FROM pary_zrodlo WHERE slot=?", (slot,)
+            ).fetchone()[0]
+            czesc = self.con.execute(
+                "SELECT SUM(f) FROM pary_zrodlo WHERE slot=? AND zrodlo=?",
+                (slot, zrodlo),
+            ).fetchone()[0]
+        else:
+            calosc = self.con.execute("SELECT SUM(f) FROM pary_zrodlo").fetchone()[0]
+            czesc = self.con.execute(
+                "SELECT SUM(f) FROM pary_zrodlo WHERE zrodlo=?", (zrodlo,)
+            ).fetchone()[0]
+        return (czesc or 0) / calosc if calosc else 0.0
 
     def statystyki(self) -> dict[str, int]:
         return {
