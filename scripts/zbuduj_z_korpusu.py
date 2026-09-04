@@ -21,7 +21,20 @@ if len(sys.argv) < 2:
     sys.exit(__doc__)
 
 ZRODLO = Path(sys.argv[1])
-MIN_PARY = int(sys.argv[2]) if len(sys.argv) > 2 else 3
+
+if len(sys.argv) > 2:
+    try:
+        MIN_PARY = int(sys.argv[2])
+    except ValueError:
+        sys.exit(
+            f"Drugi argument ma byc progiem liczbowym, a dostalem: {sys.argv[2]!r}\n"
+            f"Czy polecenie nie zostalo wklejone dwa razy? Otrzymane argumenty:\n"
+            + "\n".join(f"  [{i}] {a!r}" for i, a in enumerate(sys.argv))
+            + f"\n{__doc__}"
+        )
+else:
+    MIN_PARY = 3
+
 BAZA = ZRODLO.parent / (ZRODLO.name.split(".")[0] + ".sqlite")
 
 if not ZRODLO.exists():

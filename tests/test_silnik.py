@@ -142,6 +142,35 @@ def test_rozpoznaje_przypadek_rzadzony(silnik):
     assert silnik._przypadek_rzadzony("ponieść", "klęska") == "acc"
 
 
+def test_przypadek_wybierany_po_czestosci_nie_po_logdice(baza, tmp_path):
+    """REGRESJA: rzad przypadka to pytanie o to, co CZESTSZE.
+
+    Na korpusie 5 mln tokenow (podjac, proba) mialo obj:acc f=94 logDice 11,71
+    oraz obj:gen f=8 logDice 12,09. Wybor po logDice dawal „podjela proby"
+    zamiast „podjela probe" — forme niegramatyczna.
+    """
+    from backend.baza import BazaKolokacji, zbuduj
+
+    trojki = (
+        obj("podjąć", "próba", 94)                    # biernik: czesty
+        + obj("podjąć", "próba", 8, przypadek="gen")  # dopelniacz: rzadki...
+        # ...ale z waskim profilem brzegowym, wiec o wysokim logDice
+        + obj("czytać", "książka", 300)
+        + obj("czytać", "gazeta", 200)
+        + obj("podjąć", "decyzja", 120)
+    )
+    sciezka = tmp_path / "przypadki.sqlite"
+    zbuduj(trojki, sciezka, min_pary=3)
+    with BazaKolokacji(sciezka) as db:
+        ld_acc = db.logdice("podjąć", "obj:acc", "próba")
+        ld_gen = db.logdice("podjąć", "obj:gen", "próba")
+        assert ld_gen > ld_acc, (
+            "fixture nie odtwarza problemu — dopelniacz ma miec WYZSZY logDice"
+        )
+        s = SilnikKolokacji(db)
+        assert s._przypadek_rzadzony("podjąć", "próba") == "acc"
+
+
 def test_bez_generatora_zwraca_lemat(baza):
     """Silnik musi dzialac takze bez Morfeusza — do testow i diagnostyki."""
     s = SilnikKolokacji(baza, generator=None).sprawdz(

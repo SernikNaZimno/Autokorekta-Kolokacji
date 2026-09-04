@@ -196,10 +196,29 @@ class SilnikKolokacji:
         )
 
     def _przypadek_rzadzony(self, czasownik: str, rzeczownik: str) -> str | None:
-        """W jakim przypadku ten czasownik laczy sie z tym rzeczownikiem."""
-        najlepszy, najlepszy_ld = None, -1.0
+        """W jakim przypadku ten czasownik laczy sie z tym rzeczownikiem.
+
+        Wybieramy po CZESTOSCI, nie po logDice. To sa odpowiedzi na dwa rozne
+        pytania: logDice mierzy sile skojarzenia wzgledem profili brzegowych,
+        wiec slot rzadki, ale o waskim profilu, potrafi przebic slot czesty.
+
+        Zmierzone na korpusie 5 mln tokenow dla (podjac, proba):
+
+            obj:acc   f=94   logDice 11,71
+            obj:gen   f= 8   logDice 12,09   <- wygrywalo
+
+        Wynikiem bylo „podjela proby" zamiast „podjela probe" — forma
+        niegramatyczna, czyli gorsza niz brak sugestii, bo podwaza zaufanie
+        do calego narzedzia.
+
+        Osiem wystapien w dopelniaczu to najpewniej resztka po negacji
+        („nie podjeto proby") albo blad rozbioru. Slot obj:gen sam w sobie
+        jest poprawny — rzadza nim `uzywac`, `dokonac`, `udzielic` — wiec nie
+        da sie go po prostu odrzucic.
+        """
+        najlepszy, najlepsza_f = None, 0
         for przypadek in ("acc", "gen", "dat", "inst"):
-            ld = self.baza.logdice(czasownik, f"obj:{przypadek}", rzeczownik)
-            if ld > najlepszy_ld:
-                najlepszy_ld, najlepszy = ld, przypadek
-        return najlepszy if najlepszy_ld > 0 else None
+            f = self.baza.czestosc_pary(czasownik, f"obj:{przypadek}", rzeczownik)
+            if f > najlepsza_f:
+                najlepsza_f, najlepszy = f, przypadek
+        return najlepszy

@@ -222,6 +222,19 @@ class BazaKolokacji:
         ).fetchone()
         return w[0] if w else 0.0
 
+    def czestosc_pary(self, head: str, slot: str, dep: str) -> int:
+        """Surowa liczba wystapien pary.
+
+        Do pytan o to, co jest CZESTSZE. logDice odpowiada na inne pytanie —
+        jak silne jest skojarzenie wzgledem profili brzegowych — i przy waskim
+        profilu potrafi wyniesc slot rzadki ponad czesty. Mieszanie tych dwoch
+        miar dalo „podjela proby" zamiast „podjela probe".
+        """
+        w = self.con.execute(
+            "SELECT f FROM pary WHERE head=? AND slot=? AND dep=?", (head, slot, dep)
+        ).fetchone()
+        return w[0] if w else 0
+
     def czestosc_slotu_dep(self, slot: str, dep: str) -> int:
         """Ile razy widzielismy ten rzeczownik w tym slocie — miara zbadania."""
         w = self.con.execute(
