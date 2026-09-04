@@ -1,0 +1,20 @@
+# Srodowisko
+.venv/
+__pycache__/
+*.py[cod]
+
+# Modele i zasoby pobierane automatycznie
+stanza_resources/
+*.sqlite
+*.sqlite-journal
+
+# Dane korpusowe - budowane offline, nie trzymamy w repo
+data/
+corpora/
+*.conllu
+*.jsonl.gz
+
+# Narzedzia
+.vscode/
+.idea/
+*.log

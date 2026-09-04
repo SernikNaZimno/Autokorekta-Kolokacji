@@ -1,0 +1,7 @@
+# Rdzen jezykowy
+stanza==1.14.0          # parser zaleznosciowy pl (PDB), LAS 91,7
+morfeusz2==1.99.15      # analiza + GENERACJA form fleksyjnych, kolo cp310-abi3
+
+# Backend (Etap 3+)
+# fastapi
+# uvicorn[standard]
