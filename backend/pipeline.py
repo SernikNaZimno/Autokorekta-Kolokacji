@@ -161,6 +161,10 @@ def zbierz(
                 if n % co_ile_raport == 0:
                     tempo = n / (time.perf_counter() - t0)
                     print(f"  {n:,} trojek  ({tempo:,.0f}/s)")
+                    # Bez tego gzip trzyma bufor w pamieci i zabicie procesu
+                    # w polowie wielogodzinnego przebiegu zostawia plik
+                    # nieczytelny. Z flushem tracimy najwyzej ostatnia partie.
+                    f.flush()
             print(
                 f"[{zrodlo}] gotowe: {na_zrodlo[zrodlo]:,} trojek "
                 f"w {time.perf_counter() - t_zrodlo:.0f} s"
@@ -176,10 +180,34 @@ def zbierz(
     }
 
 
-def czytaj_trojki(sciezka: str | Path) -> Iterator[tuple[str, str, str, str]]:
-    """Czyta TSV.gz z powrotem — wejscie dla `baza.zbuduj`."""
-    with gzip.open(sciezka, "rt", encoding="utf-8") as f:
-        for linia in f:
-            pola = linia.rstrip("\n").split("\t")
-            if len(pola) == 4:
-                yield (pola[0], pola[1], pola[2], pola[3])
+def czytaj_trojki(
+    sciezki: str | Path | Iterable[str | Path],
+) -> Iterator[tuple[str, str, str, str]]:
+    """Czyta TSV.gz z powrotem — wejscie dla `baza.zbuduj`.
+
+    Przyjmuje jedna sciezke albo kilka. Wiele plikow pozwala rozbic dlugi
+    przebieg na kilka krotszych sesji Colaba i polaczyc wyniki bez ponownego
+    parsowania — przy 30 mln tokenow (~12 h) jedna sesja to zbyt duze ryzyko.
+
+    Uciety plik NIE przerywa odczytu. Jesli sesja padnie w polowie zapisu,
+    ostatni blok gzipa bedzie uszkodzony; zwracamy wtedy wszystko, co udalo
+    sie odczytac, zamiast tracic cale godziny pracy GPU.
+    """
+    if isinstance(sciezki, (str, Path)):
+        sciezki = [sciezki]
+
+    for sciezka in sciezki:
+        n = 0
+        try:
+            with gzip.open(sciezka, "rt", encoding="utf-8") as f:
+                for linia in f:
+                    pola = linia.rstrip("\n").split("\t")
+                    if len(pola) == 4:
+                        n += 1
+                        yield (pola[0], pola[1], pola[2], pola[3])
+        except (EOFError, gzip.BadGzipFile, OSError) as e:
+            print(
+                f"UWAGA: {Path(sciezka).name} jest uszkodzony lub uciety "
+                f"({type(e).__name__}). Odczytano {n:,} trojek i kontynuuje. "
+                f"Najpewniej sesja Colaba przerwala zapis."
+            )

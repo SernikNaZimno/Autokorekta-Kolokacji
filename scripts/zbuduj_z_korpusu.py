@@ -6,6 +6,10 @@ sie na limity czasu sesji.
 
 Uzycie:
     python scripts/zbuduj_z_korpusu.py data/trojki_5M.tsv.gz [prog_par]
+    python scripts/zbuduj_z_korpusu.py "data/trojki_30M_*.tsv.gz"
+
+Druga postac laczy kilka przebiegow w jedna baze — przydatne, gdy dlugi
+przebieg zostal rozbity na osobne sesje Colaba.
 """
 
 import sys
@@ -20,7 +24,11 @@ from backend.pipeline import czytaj_trojki  # noqa: E402
 if len(sys.argv) < 2:
     sys.exit(__doc__)
 
-ZRODLO = Path(sys.argv[1])
+import glob  # noqa: E402
+
+WZORZEC = sys.argv[1]
+PLIKI = [Path(p) for p in sorted(glob.glob(WZORZEC))] or [Path(WZORZEC)]
+ZRODLO = PLIKI[0]
 
 if len(sys.argv) > 2:
     try:
@@ -35,18 +43,25 @@ if len(sys.argv) > 2:
 else:
     MIN_PARY = 3
 
-BAZA = ZRODLO.parent / (ZRODLO.name.split(".")[0] + ".sqlite")
+brakujace = [p for p in PLIKI if not p.exists()]
+if brakujace:
+    sys.exit("Brak plikow: " + ", ".join(str(p) for p in brakujace))
 
-if not ZRODLO.exists():
-    sys.exit(f"Brak pliku: {ZRODLO}")
+# Nazwa bazy bez znacznika czesci: trojki_30M_a.tsv.gz -> trojki_30M.sqlite
+rdzen = ZRODLO.name.split(".")[0]
+if len(PLIKI) > 1:
+    rdzen = rdzen.rsplit("_", 1)[0]
+BAZA = ZRODLO.parent / (rdzen + ".sqlite")
 
 print("=" * 72)
-print(f"BUDOWA BAZY z {ZRODLO.name} ({ZRODLO.stat().st_size / 1024**2:.1f} MB)")
+print("BUDOWA BAZY")
+for p in PLIKI:
+    print(f"  {p.name:<44} {p.stat().st_size / 1024**2:>7.1f} MB")
 print(f"prog przyciecia: pary o czestosci < {MIN_PARY} odpadaja")
 print("=" * 72)
 
 t0 = time.perf_counter()
-stat = zbuduj(czytaj_trojki(ZRODLO), BAZA, min_pary=MIN_PARY, postep=print)
+stat = zbuduj(czytaj_trojki(PLIKI), BAZA, min_pary=MIN_PARY, postep=print)
 czas = time.perf_counter() - t0
 
 print(f"\nGotowe w {czas:.1f} s -> {BAZA.name} "
