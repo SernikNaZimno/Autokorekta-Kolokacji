@@ -73,7 +73,92 @@ i oba wyjda rzadsze niz sa naprawde — co przy progu „para rzadka ⇒ alarm" 
 falszywe alarmy dokladnie na zdaniach przeczacych. Ekstraktor musi wykrywac `advmod`
 z lematem `nie` przy czasowniku i mapowac wtedy `obj:gen` → `obj:acc`.
 
+---
+
+# Ustalenia z Etapu 1 (ekstraktor na skale)
+
+Ekstraktor puszczony przez caly treebank **UD Polish-PDB** (350 tys. tokenow, zloty
+standard): 22 152 zdania, 107 247 trojek, 88 704 unikalne pary.
+Skrypty: `scripts/statystyki_korpusu.py`, `scripts/analiza_rzadkosci.py`.
+
+## Sygnal kolokacyjny istnieje
+
+Najczestsze `obj:acc` to autentyczne polskie kolokacje — nie szum:
+`zwracać uwagę`, `podjąć decyzję`, `zabrać głos`, `pełnić funkcję`, `brać udział`.
+
+Bramka zdana z duzym zapasem:
+
+| para | f | logDice |
+|---|---:|---:|
+| `podjąć + decyzja` | 13 | **12,68** |
+| `podejmować + decyzja` | 10 | **12,46** |
+| `przyjąć + decyzja` | 2 | 9,51 |
+| `zrobić + decyzja` | 0 | 0,00 |
+
+Para aspektowa `podjąć`/`podejmować` wychodzi jako dwa wpisy o niemal rownym
+logDice — aspekt zachowany zgodnie z zalozeniem.
+
+## Skazenie domenowe
+
+Szczyt listy zajmuje `wykonywać + skok` (51x, logDice 13,5), obok `trzymać + piłka`.
+PDB zawiera sprawozdania sportowe. **Domena korpusu przecieka do norm kolokacyjnych.**
+Dla docelowej bazy: mieszac zrodla i rozwazyc wazenie, zeby jedna domena nie
+narzucala normy calemu jezykowi.
+
+## REWIZJA ARCHITEKTURY: regula detekcji z planu jest bledna
+
+Rozklad czestosci par w PDB:
+
+| f | par | udzial | skumulowane |
+|---:|---:|---:|---:|
+| 1 | 80 654 | **90,9%** | 90,9% |
+| 2 | 5 031 | 5,7% | 96,6% |
+| ≥3 | 3 019 | 3,4% | 100% |
+
+**Ponad 90% par wystepuje dokladnie raz.** Reguła „para rzadka ⇒ alarm" jest wiec
+nie do uzycia: przy kazdym realnym rozmiarze korpusu ogromna czesc *poprawnej*
+polszczyzny wyglada na rzadka. Zbudowalibysmy generator falszywych alarmow.
+
+`zrobić + decyzja` ma logDice 0 — ale **dokladnie te sama wartosc** ma kazda
+poprawna kolokacja nieobecna w korpusie. Sama nieobecnosc nie niesie informacji.
+
+### Regula wlasciwa — test wzgledny, nie bezwzgledny
+
+Nie pytamy „czy ta para jest rzadka", tylko „**czy w tym slocie stoi duzo lepsza
+alternatywa, semantycznie bliska temu, co napisano**". Alarm wymaga *wszystkich*
+czterech warunkow:
+
+1. **Slot jest zbadany** — czestosc brzegowa rzeczownika w tym slocie ≥ N
+   (wstepnie 50). Jesli nie wiemy nic o `porażka` jako dopelnieniu, milczymy.
+   To ten warunek trzyma precyzje; bez niego reszta nie ma znaczenia.
+2. Obserwowana para ma niski logDice (warunek konieczny, dalece niewystarczajacy).
+3. Istnieje alternatywa w tym samym slocie o wysokim logDice.
+4. **Alternatywa jest semantycznie bliska** obserwowanemu slowu (plWordNet:
+   synonim / hiperonim / wspoldzielone kolokaty). To odroznia *blad kolokacyjny*
+   od *innego znaczenia* — bez tego przy kazdym rzeczowniku podpowiadalibysmy
+   najczestszy czasownik.
+
+Punkt 1 to nowy element wzgledem planu i jest kluczowy: **domyslna odpowiedz
+silnika brzmi „nie wiem", nie „blad"**.
+
+## Ile korpusu potrzeba
+
+Krzywa pokrycia przy progu f≥3 (przyrosty **rosna**, wiec daleko do nasycenia):
+
+| % korpusu | tokenow | par f≥3 | przyrost |
+|---:|---:|---:|---:|
+| 12,5% | 43 747 | 197 | +197 |
+| 25% | 87 494 | 784 | +587 |
+| 50% | 174 989 | 1 479 | +695 |
+| 75% | 262 483 | 2 176 | +697 |
+| 100% | 349 978 | 3 019 | +843 |
+
+8 626 solidnych par na milion tokenow, przy czym ekstrapolacja liniowa **zanizza**
+(krzywa wklesla). Cel 100 mln tokenow z planu daje **co najmniej ~860 tys. par**
+i pozostaje wlasciwy — PDB jest o dwa rzedy wielkosci za maly, co widac po tym,
+ze `porażka` jako dopelnienie ma w calym treebanku dwa wystapienia.
+
 ## Nastepny krok
 
-Etap 1: ekstraktor trojek jako modul (nie skrypt spike), z powyzszymi regulami klucza,
-walidowany na NLPre-PL (`ipipan/nlprepl`, 1,2 mln tokenow, gotowy CoNLL-U).
+Etap 3: pipeline korpusowy w Colabie (Wikipedia PL + zrodla z innych domen,
+zeby nie powtorzyc skazenia sportowego PDB).
