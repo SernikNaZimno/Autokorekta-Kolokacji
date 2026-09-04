@@ -82,10 +82,15 @@ Pełny korpus wymaga GPU — patrz [colab/zbieranie_korpusu.ipynb](colab/zbieran
 | Ekstraktor trójek + walidacja na złotym standardzie | zrobione |
 | Warstwa bazy (SQLite + logDice + znacznik źródła) | zrobione |
 | Źródła korpusu i filtr jakości | zrobione |
-| Parsowanie pełnego korpusu na GPU | w toku |
-| Silnik sugestii (plWordNet / podobieństwo dystrybucyjne) | przed nami |
-| Ewaluacja i progi | przed nami |
+| Pipeline korpusowy + notebook Colab | zrobione |
+| Silnik detekcji + generowanie form sugestii | zrobione |
+| Parsowanie pełnego korpusu na GPU | czeka na przebieg |
+| Ewaluacja i kalibracja progów | przed nami |
 | Dodatek Office.js | przed nami |
+
+Silnik sprawdza na razie wyłącznie relację czasownik → dopełnienie bliższe
+(`obj`) — najlepiej poświadczony i najmniej dwuznaczny typ kolokacji. Kolejne
+typy dokładamy pojedynczo, każdy po zmierzeniu jego precyzji w Etapie 6.
 
 ## Uwagi techniczne
 
