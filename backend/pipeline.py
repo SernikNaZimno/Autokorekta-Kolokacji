@@ -29,18 +29,38 @@ ZRODLA: dict[str, dict] = {
 }
 
 
-def utworz_pipeline(gpu: bool = False, partia: int = 64):
-    """Pipeline Stanzy. Na GPU zwieksz partie — narzut na wywolanie dominuje."""
+def utworz_pipeline(gpu: bool = False, partia: int | None = None):
+    """Pipeline Stanzy.
+
+    `partia` steruje rozmiarem partii MODELU (ile zdan idzie przez siec naraz)
+    i jest czym innym niz grupowanie zdan w `parsuj_do_trojek`.
+
+    Wczesniejsza wersja ustawiala tu na sztywno `partia=256`, co bylo bledem:
+    domyslny `depparse_batch_size` w Stanzy 1.14 wynosi 400, a `lemma` 5000,
+    wiec „zwiekszanie partii" faktycznie je ZMNIEJSZALO. Na CPU bez znaczenia
+    (pomiar: scripts/bench_partie.py — 1,0x), ale na GPU male partie zostawiaja
+    karte bezczynna miedzy porcjami.
+
+    Przy `partia=None` zostawiamy domyslne Stanzy. Na GPU warto podniesc, ale
+    wartosc nalezy ZMIERZYC (komorka 5b notebooka), a nie zgadnac — optimum
+    zalezy od dlugosci zdan i pamieci karty.
+    """
     import stanza
+
+    kwargs = {}
+    if partia is not None:
+        kwargs.update(
+            tokenize_batch_size=partia,
+            pos_batch_size=partia,
+            depparse_batch_size=partia,
+        )
 
     return stanza.Pipeline(
         "pl",
         processors="tokenize,pos,lemma,depparse",
         use_gpu=gpu,
-        tokenize_batch_size=partia,
-        pos_batch_size=partia,
-        depparse_batch_size=partia,
         verbose=False,
+        **kwargs,
     )
 
 
@@ -97,6 +117,7 @@ def zbierz(
     wyjscie: str | Path,
     gpu: bool = False,
     partia: int = 64,
+    partia_modelu: int | None = None,
     co_ile_raport: int = 20_000,
 ) -> dict:
     """Glowna petla: dla kazdego zrodla parsuje przydzielony budzet tokenow.
@@ -105,12 +126,21 @@ def zbierz(
     "web": 2_000_000}. Budzet jest per zrodlo, zeby jedno nie zdominowalo
     korpusu — Wikipedia jest latwiejsza do strumieniowania niz C4 i bez
     podzialu wypelnilaby caly limit.
+
+    `partia` to liczba zdan grupowanych w jedno wywolanie Stanzy;
+    `partia_modelu` to rozmiar partii wewnatrz sieci. To dwie rozne rzeczy —
+    pierwsza nie ma zmierzalnego wplywu (scripts/bench_partie.py), druga na
+    GPU owszem. Przy None obowiazuja domyslne Stanzy.
+
+    Rozklad czasu zmierzony na CPU (scripts/diagnoza_przepustowosci.py):
+    parsowanie 94%, pobieranie z filtrem 6%, filtr slownikowy 0%. Wszelka
+    optymalizacja poza Stanza jest wiec walka o co najwyzej 6%.
     """
     from backend.slownik import WalidatorSlownikowy
 
     wyjscie = Path(wyjscie)
     wyjscie.parent.mkdir(parents=True, exist_ok=True)
-    nlp = utworz_pipeline(gpu=gpu, partia=partia)
+    nlp = utworz_pipeline(gpu=gpu, partia=partia_modelu)
     walidator = WalidatorSlownikowy()
 
     powody: Counter[str] = Counter()
