@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import math
 import sqlite3
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Iterator
@@ -52,6 +53,7 @@ def zbuduj(
     sciezka: str | Path,
     min_pary: int = MIN_CZESTOSC_PARY,
     partia: int = 100_000,
+    postep=None,
 ) -> dict[str, int]:
     """Buduje baze ze strumienia trojek. Zwraca statystyki.
 
@@ -61,14 +63,25 @@ def zbuduj(
     Znacznik zrodla jest zapamietywany per para, zeby dalo sie zmierzyc skazenie
     domenowe (np. czy dana „kolokacja" pochodzi wylacznie z webu) i przewazyc
     albo odrzucic zrodlo BEZ ponownego parsowania korpusu.
+
+    `postep` to funkcja wywolywana z nazwa etapu i czasem od startu — np. `print`.
+    Przy milionach trojek poszczegolne kroki trwaja minuty i bez tego budowa
+    nie do odroznienia od zawieszenia (co realnie sie zdarzylo).
     """
     sciezka = Path(sciezka)
     if sciezka.exists():
         sciezka.unlink()
 
+    t_start = time.perf_counter()
+
+    def _krok(nazwa: str) -> None:
+        if postep is not None:
+            postep(f"  [{time.perf_counter() - t_start:6.1f}s] {nazwa}")
+
     con = sqlite3.connect(sciezka)
     _dostroj(con)
     con.execute("CREATE TABLE surowe (head TEXT, slot TEXT, dep TEXT, zrodlo TEXT)")
+    _krok("wczytywanie trojek")
 
     bufor: list[tuple[str, str, str, str]] = []
     n_surowych = 0
@@ -87,6 +100,7 @@ def zbuduj(
     con.commit()
 
     # Wklad zrodel per para — mala tabela, a pozwala wykryc skazenie.
+    _krok(f"agregacja zrodel ({n_surowych:,} trojek)")
     con.execute(
         """CREATE TABLE pary_zrodlo AS
            SELECT head, slot, dep, zrodlo, COUNT(*) AS f
@@ -94,6 +108,7 @@ def zbuduj(
     )
 
     # Agregacja par.
+    _krok("agregacja par")
     con.execute(
         """CREATE TABLE pary AS
            SELECT head, slot, dep, COUNT(*) AS f
@@ -102,6 +117,7 @@ def zbuduj(
     n_par_przed = con.execute("SELECT COUNT(*) FROM pary").fetchone()[0]
 
     # Brzegowe PRZED przycieciem — inaczej logDice wyjdzie zawyzony.
+    _krok(f"czestosci brzegowe ({n_par_przed:,} par)")
     con.execute(
         """CREATE TABLE brzeg_head AS
            SELECT head, slot, SUM(f) AS f FROM pary GROUP BY head, slot"""
@@ -112,6 +128,24 @@ def zbuduj(
     )
 
     con.execute("DROP TABLE surowe")
+    _krok("indeksy przed przycieciem")
+
+    # KOLEJNOSC MA ZNACZENIE. Indeksy musza istniec, ZANIM puscimy zapytania,
+    # ktore z nich korzystaja — inaczej oba ponizsze sa kwadratowe:
+    #
+    #   * DELETE z NOT EXISTS skanuje `pary` raz na kazdy wiersz `pary_zrodlo`
+    #     (1,1 mln x 60 tys. porownan przy korpusie 5 mln tokenow),
+    #   * UPDATE logdice skanuje obie tabele brzegowe raz na kazda pare.
+    #
+    # Przy treebanku PDB (3 tys. par) schodzilo to w sekundy i bledu nie bylo
+    # widac. Przy 5 mln tokenow tabele sa ~20x wieksze, a koszt kwadratowy
+    # rosnie ~400x — budowa bazy wygladala na zawieszona.
+    con.execute("CREATE INDEX idx_para ON pary (head, slot, dep)")
+    con.execute("CREATE INDEX idx_pz ON pary_zrodlo (head, slot, dep)")
+    con.execute("CREATE UNIQUE INDEX idx_bh ON brzeg_head (head, slot)")
+    con.execute("CREATE UNIQUE INDEX idx_bd ON brzeg_dep (slot, dep)")
+
+    _krok("przycinanie par rzadkich")
     con.execute("DELETE FROM pary WHERE f < ?", (min_pary,))
     con.execute(
         """DELETE FROM pary_zrodlo WHERE NOT EXISTS (
@@ -121,6 +155,7 @@ def zbuduj(
 
     # logDice = 14 + log2(2*f(xy) / (f(x)+f(y))). Skala ~0-14 niezalezna od
     # rozmiaru korpusu, wiec progi przenosza sie miedzy wersjami bazy.
+    _krok("logDice")
     con.create_function("log2", 1, math.log2, deterministic=True)
     con.execute("ALTER TABLE pary ADD COLUMN logdice REAL")
     con.execute(
@@ -131,18 +166,18 @@ def zbuduj(
                ))"""
     )
 
-    con.execute("CREATE INDEX idx_para ON pary (head, slot, dep)")
-    con.execute("CREATE INDEX idx_pz ON pary_zrodlo (head, slot, dep)")
+    # Te dwa zawieraja `logdice`, wiec dopiero po jego wyliczeniu.
+    _krok("indeksy zapytan silnika")
     con.execute("CREATE INDEX idx_slot_dep ON pary (slot, dep, logdice DESC)")
     con.execute("CREATE INDEX idx_slot_head ON pary (slot, head, logdice DESC)")
-    con.execute("CREATE UNIQUE INDEX idx_bh ON brzeg_head (head, slot)")
-    con.execute("CREATE UNIQUE INDEX idx_bd ON brzeg_dep (slot, dep)")
     con.commit()
 
     n_par_po = con.execute("SELECT COUNT(*) FROM pary").fetchone()[0]
+    _krok("VACUUM")
     con.execute("VACUUM")
     con.commit()
     con.close()
+    _krok("gotowe")
 
     return {
         "trojek": n_surowych,

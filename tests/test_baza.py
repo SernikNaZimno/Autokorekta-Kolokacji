@@ -40,6 +40,49 @@ def test_przyciecie_usuwa_pary_rzadkie(baza):
     assert baza.logdice("podjąć", "obj:acc", "decyzja") > 0
 
 
+def test_indeksy_powstaja_przed_przycieciem(tmp_path):
+    """REGRESJA: indeksy musza powstawac PRZED zapytaniami, ktore z nich korzystaja.
+
+    Pierwotnie `DELETE FROM pary_zrodlo ... NOT EXISTS` i `UPDATE pary SET
+    logdice` chodzily bez indeksow, wiec byly kwadratowe. Na treebanku PDB
+    (3 tys. par) schodzilo to w sekundy i bledu nie bylo widac; przy korpusie
+    5 mln tokenow budowa bazy wygladala na zawieszona.
+
+    Sprawdzamy KOLEJNOSC etapow, a nie plan zapytania na gotowej bazie —
+    ten drugi test przechodzilby tak samo przed poprawka, bo indeksy istnieja
+    na koncu niezaleznie od tego, kiedy powstaly.
+    """
+    etapy = []
+    zbuduj(
+        t("podjąć", "decyzja", 5) + t("zrobić", "zdjęcie", 5),
+        tmp_path / "kolejnosc.sqlite",
+        min_pary=2,
+        postep=etapy.append,
+    )
+    nazwy = [e.split("] ", 1)[1] for e in etapy]
+
+    i_indeksy = nazwy.index("indeksy przed przycieciem")
+    i_przyciecie = nazwy.index("przycinanie par rzadkich")
+    i_logdice = nazwy.index("logDice")
+
+    assert i_indeksy < i_przyciecie, (
+        f"indeksy tworzone po przycinaniu — DELETE bedzie kwadratowy: {nazwy}"
+    )
+    assert i_indeksy < i_logdice, (
+        f"indeksy tworzone po logDice — UPDATE bedzie kwadratowy: {nazwy}"
+    )
+
+
+def test_postep_raportuje_etapy(tmp_path):
+    """Bez raportowania dluga budowa jest nie do odroznienia od zawieszenia."""
+    etapy = []
+    zbuduj(t("podjąć", "decyzja", 5), tmp_path / "p.sqlite", postep=etapy.append)
+    polaczone = " ".join(etapy)
+    assert "wczytywanie" in polaczone
+    assert "logDice" in polaczone
+    assert "gotowe" in polaczone
+
+
 def test_brzegowe_licza_sie_przed_przycieciem(baza):
     """Pulapka: gdyby brzegowe liczyly sie po odrzuceniu rzadkich par,
     mianownik logDice bylby zanizony, a wszystkie wyniki zawyzone."""
